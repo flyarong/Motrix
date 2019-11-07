@@ -1,22 +1,27 @@
 const userKeys = [
-  'locale',
-  'cookie',
-  'resume-all-when-app-launched',
-  'task-notification',
-  'hide-app-menu',
-  'new-task-show-downloading',
-  'use-proxy',
   'all-proxy-backup',
+  'auto-check-update',
+  'cookie',
+  'enable-egg-features',
+  'hide-app-menu',
+  'keep-window-state',
+  'last-check-update-time',
+  'locale',
   'log-path',
+  'new-task-show-downloading',
+  'open-at-login',
+  'protocols',
+  'resume-all-when-app-launched',
   'session-path',
-  'enable-egg-features'
+  'task-notification',
+  'theme',
+  'use-proxy'
 ]
 
 const systemKeys = [
-  'max-concurrent-downloads',
-  'all-proxy',
   'all-proxy-passwd',
   'all-proxy-user',
+  'all-proxy',
   'allow-overwrite',
   'allow-piece-length-change',
   'always-resume',
@@ -39,10 +44,10 @@ const systemKeys = [
   'bt-save-metadata',
   'bt-seed-unverified',
   'bt-stop-timeout',
-  'bt-tracker',
   'bt-tracker-connect-timeout',
   'bt-tracker-interval',
   'bt-tracker-timeout',
+  'bt-tracker',
   'check-integrity',
   'checksum',
   'conditional-get',
@@ -61,9 +66,9 @@ const systemKeys = [
   'force-save',
   'ftp-passwd',
   'ftp-pasv',
-  'ftp-proxy',
   'ftp-proxy-passwd',
   'ftp-proxy-user',
+  'ftp-proxy',
   'ftp-reuse-connection',
   'ftp-type',
   'ftp-user',
@@ -74,15 +79,16 @@ const systemKeys = [
   'http-auth-challenge',
   'http-no-cache',
   'http-passwd',
-  'http-proxy',
   'http-proxy-passwd',
   'http-proxy-user',
+  'http-proxy',
   'http-user',
-  'https-proxy',
   'https-proxy-passwd',
   'https-proxy-user',
+  'https-proxy',
   'index-out',
   'lowest-speed-limit',
+  'max-concurrent-downloads',
   'max-connection-per-server',
   'max-download-limit',
   'max-file-not-found',
@@ -90,6 +96,8 @@ const systemKeys = [
   'max-resume-failure-tries',
   'max-tries',
   'max-upload-limit',
+  'max-overall-download-limit',
+  'max-overall-upload-limit',
   'metalink-base-uri',
   'metalink-enable-unique-protocol',
   'metalink-language',
@@ -103,8 +111,8 @@ const systemKeys = [
   'no-proxy',
   'out',
   'parameterized-uri',
-  'pause',
   'pause-metadata',
+  'pause',
   'piece-length',
   'proxy-method',
   'realtime-chunk-checksum',
@@ -126,7 +134,12 @@ const systemKeys = [
   'user-agent'
 ]
 
+const needRestartKeys = [
+  'hide-app-menu'
+]
+
 export {
   userKeys,
-  systemKeys
+  systemKeys,
+  needRestartKeys
 }

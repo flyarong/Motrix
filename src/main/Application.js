@@ -1,33 +1,44 @@
 import { EventEmitter } from 'events'
 import { app, shell, dialog, ipcMain } from 'electron'
 import is from 'electron-is'
+import { readFile } from 'fs'
+import { extname, basename } from 'path'
+
 import logger from './core/Logger'
-import ExceptionHandler from './core/ExceptionHandler'
 import ConfigManager from './core/ConfigManager'
+import { setupLocaleManager } from '@/ui/Locale'
 import Engine from './core/Engine'
+import AutoLaunchManager from './core/AutoLaunchManager'
 import UpdateManager from './core/UpdateManager'
 import EnergyManager from './core/EnergyManager'
 import ProtocolManager from './core/ProtocolManager'
 import WindowManager from './ui/WindowManager'
 import MenuManager from './ui/MenuManager'
 import TouchBarManager from './ui/TouchBarManager'
+import TrayManager from './ui/TrayManager'
+import ThemeManager from './ui/ThemeManager'
+import { AUTO_CHECK_UPDATE_INTERVAL } from '@shared/constants'
 
 export default class Application extends EventEmitter {
   constructor () {
     super()
-
-    this.exceptionHandler = new ExceptionHandler()
-
+    this.isReady = false
     this.init()
   }
 
   init () {
     this.configManager = new ConfigManager()
-    this.locale = this.configManager.getLocale()
 
-    this.windowManager = new WindowManager({
-      userConfig: this.configManager.getUserConfig()
-    })
+    this.locale = this.configManager.getLocale()
+    this.localeManager = setupLocaleManager(this.locale)
+    this.i18n = this.localeManager.getI18n()
+
+    this.menuManager = new MenuManager()
+    this.menuManager.setup(this.locale)
+
+    this.initTouchBarManager()
+
+    this.initWindowManager()
 
     this.engine = new Engine({
       systemConfig: this.configManager.getSystemConfig(),
@@ -35,10 +46,11 @@ export default class Application extends EventEmitter {
     })
     this.startEngine()
 
-    this.menuManager = new MenuManager()
-    this.menuManager.setup(this.locale)
+    this.trayManager = new TrayManager()
 
-    this.touchBarManager = new TouchBarManager()
+    this.autoLaunchManager = new AutoLaunchManager()
+
+    this.initThemeManager()
 
     this.energyManager = new EnergyManager()
 
@@ -47,6 +59,7 @@ export default class Application extends EventEmitter {
     this.initProtocolManager()
 
     this.handleCommands()
+
     this.handleIpcMessages()
   }
 
@@ -54,12 +67,11 @@ export default class Application extends EventEmitter {
     try {
       this.engine.start()
     } catch (err) {
+      const { message } = err
       dialog.showMessageBox({
         type: 'error',
-        title: '系统错误',
-        message: `应用启动失败：${err.message}`,
-        buttons: ['知道了'],
-        cancelId: 1
+        title: this.i18n.t('app.system-error-title'),
+        message: this.i18n.t('app.system-error-message', { message })
       }, () => {
         setTimeout(() => {
           app.quit()
@@ -68,13 +80,69 @@ export default class Application extends EventEmitter {
     }
   }
 
-  start (page) {
-    this.showPage(page)
+  initWindowManager () {
+    this.windowManager = new WindowManager({
+      userConfig: this.configManager.getUserConfig()
+    })
+
+    this.windowManager.on('window-resized', (data) => {
+      this.storeWindowState(data)
+    })
+    this.windowManager.on('window-moved', (data) => {
+      this.storeWindowState(data)
+    })
+    this.windowManager.on('window-closed', (data) => {
+      this.storeWindowState(data)
+    })
   }
 
-  showPage (page) {
-    const win = this.windowManager.openWindow(page)
-    this.touchBarManager.setup(page, win)
+  storeWindowState (data = {}) {
+    const enabled = this.configManager.getUserConfig('keep-window-state')
+    if (!enabled) {
+      return
+    }
+
+    const state = this.configManager.getUserConfig('window-state', {})
+    const { page, bounds } = data
+    const newState = {
+      ...state,
+      [page]: bounds
+    }
+    this.configManager.setUserConfig('window-state', newState)
+  }
+
+  start (page, options = {}) {
+    this.showPage(page, options)
+  }
+
+  showPage (page, options = {}) {
+    const { openedAtLogin } = options
+    const win = this.windowManager.openWindow(page, {
+      hidden: openedAtLogin
+    })
+    win.once('ready-to-show', () => {
+      this.isReady = true
+      this.emit('ready')
+    })
+    if (is.macOS()) {
+      this.touchBarManager.setup(page, win)
+    }
+  }
+
+  show (page = 'index') {
+    this.windowManager.showWindow(page)
+  }
+
+  hide (page) {
+    if (page) {
+      this.windowManager.hideWindow(page)
+    } else {
+      this.windowManager.hideAllWindow()
+    }
+  }
+
+  toggle (page = 'index') {
+    this.windowManager.toggleWindow(page)
   }
 
   closePage (page) {
@@ -84,6 +152,7 @@ export default class Application extends EventEmitter {
   stop () {
     this.engine.stop()
     this.energyManager.stopPowerSaveBlocker()
+    this.trayManager.destroy()
   }
 
   sendCommand (command, ...args) {
@@ -109,32 +178,89 @@ export default class Application extends EventEmitter {
     })
   }
 
+  initThemeManager () {
+    this.themeManager = new ThemeManager()
+    this.themeManager.on('system-theme-changed', (theme) => {
+      this.trayManager.changeIconTheme(theme)
+      this.sendCommandToAll('application:system-theme', theme)
+    })
+  }
+
+  initTouchBarManager () {
+    if (!is.macOS()) {
+      return
+    }
+    this.touchBarManager = new TouchBarManager()
+  }
+
   initProtocolManager () {
     if (is.dev() || is.mas()) {
       return
     }
-    this.protocolManager = new ProtocolManager()
+    const protocols = this.configManager.getUserConfig('protocols', {})
+    this.protocolManager = new ProtocolManager({
+      protocols
+    })
   }
 
   handleProtocol (url) {
     if (is.dev() || is.mas()) {
       return
     }
+
+    this.show()
+
     this.protocolManager.handle(url)
-    this.showPage('index')
+  }
+
+  handleFile (filePath) {
+    if (!filePath) {
+      return
+    }
+
+    if (extname(filePath).toLowerCase() !== '.torrent') {
+      return
+    }
+
+    this.show()
+
+    const fileName = basename(filePath)
+    readFile(filePath, (err, data) => {
+      if (err) {
+        logger.warn(`[Motrix] read file error: ${filePath}`, err.message)
+        return
+      }
+      const file = Buffer.from(data).toString('base64')
+      const args = [fileName, file]
+      this.sendCommandToAll('application:new-bt-task-with-file', ...args)
+    })
   }
 
   initUpdaterManager () {
     if (is.mas()) {
       return
     }
-    this.updateManager = new UpdateManager()
+    this.updateManager = new UpdateManager({
+      autoCheck: this.isNeedAutoCheck(),
+      setCheckTime: this.configManager
+    })
     this.handleUpdaterEvents()
+  }
+
+  isNeedAutoCheck () {
+    const enable = this.configManager.getUserConfig('auto-check-update')
+    if (!enable) {
+      return false
+    }
+
+    const lastCheck = this.configManager.getUserConfig('last-check-update-time')
+    return (Date.now() - lastCheck > AUTO_CHECK_UPDATE_INTERVAL)
   }
 
   handleUpdaterEvents () {
     this.updateManager.on('checking', (event) => {
       this.menuManager.updateMenuItemEnabledState('app.check-for-updates', false)
+      this.trayManager.updateMenuItemEnabledState('app.check-for-updates', false)
     })
 
     this.updateManager.on('download-progress', (event) => {
@@ -144,10 +270,12 @@ export default class Application extends EventEmitter {
 
     this.updateManager.on('update-not-available', (event) => {
       this.menuManager.updateMenuItemEnabledState('app.check-for-updates', true)
+      this.trayManager.updateMenuItemEnabledState('app.check-for-updates', true)
     })
 
     this.updateManager.on('update-downloaded', (event) => {
       this.menuManager.updateMenuItemEnabledState('app.check-for-updates', true)
+      this.trayManager.updateMenuItemEnabledState('app.check-for-updates', true)
       const win = this.windowManager.getWindow('index')
       win.setProgressBar(0)
     })
@@ -158,6 +286,7 @@ export default class Application extends EventEmitter {
 
     this.updateManager.on('update-error', (event) => {
       this.menuManager.updateMenuItemEnabledState('app.check-for-updates', true)
+      this.trayManager.updateMenuItemEnabledState('app.check-for-updates', true)
     })
   }
 
@@ -180,12 +309,29 @@ export default class Application extends EventEmitter {
     })
 
     this.on('application:exit', () => {
-      this.engine.stop()
+      this.stop()
       app.exit()
     })
 
-    this.on('application:show', (page = 'index') => {
-      this.showPage(page)
+    this.on('application:open-at-login', (openAtLogin) => {
+      console.log('application:open-at-login===>', openAtLogin)
+      if (is.linux()) {
+        return
+      }
+
+      if (openAtLogin) {
+        this.autoLaunchManager.enable()
+      } else {
+        this.autoLaunchManager.disable()
+      }
+    })
+
+    this.on('application:show', (page) => {
+      this.show(page)
+    })
+
+    this.on('application:hide', (page) => {
+      this.hide(page)
     })
 
     this.on('application:reset', () => {
@@ -197,8 +343,49 @@ export default class Application extends EventEmitter {
       this.updateManager.check()
     })
 
+    this.on('application:change-theme', (theme) => {
+      this.themeManager.updateAppAppearance(theme)
+      this.sendCommandToAll('application:theme', theme)
+    })
+
     this.on('application:change-locale', (locale) => {
-      this.menuManager.setup(locale)
+      logger.info('[Motrix] application:change-locale===>', locale)
+      this.localeManager.changeLanguageByLocale(locale)
+        .then(() => {
+          this.menuManager.setup(locale)
+          this.trayManager.setup(locale)
+        })
+    })
+
+    this.on('application:open-file', (event) => {
+      dialog.showOpenDialog({
+        properties: ['openFile'],
+        filters: [
+          {
+            name: 'Torrent',
+            extensions: ['torrent']
+          }
+        ]
+      }, (filePaths) => {
+        if (!filePaths || filePaths.length === 0) {
+          return
+        }
+
+        const [filePath] = filePaths
+        this.handleFile(filePath)
+      })
+    })
+
+    this.on('application:clear-recent-tasks', () => {
+      app.clearRecentDocuments()
+    })
+
+    this.on('application:setup-protocols-client', (protocols) => {
+      if (is.dev() || is.mas()) {
+        return
+      }
+      console.log('this.protocolManager', protocols)
+      this.protocolManager.setup(protocols)
     })
 
     this.on('help:official-website', () => {
@@ -229,7 +416,12 @@ export default class Application extends EventEmitter {
     })
 
     ipcMain.on('update-menu-states', (event, visibleStates, enabledStates, checkedStates) => {
-      this.menuManager.updateStates(visibleStates, enabledStates, checkedStates)
+      this.menuManager.updateMenuStates(visibleStates, enabledStates, checkedStates)
+      this.trayManager.updateMenuStates(visibleStates, enabledStates, checkedStates)
+    })
+
+    ipcMain.on('download-status-change', (event, status) => {
+      this.trayManager.updateStatus(status)
     })
   }
 }

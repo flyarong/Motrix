@@ -5,10 +5,12 @@ import Aria2 from 'aria2'
 import {
   separateConfig,
   compactUndefined,
+  formatOptionsForEngine,
   mergeTaskResult,
   changeKeysToCamelCase,
   changeKeysToKebabCase
 } from '@shared/utils'
+import { EMPTY_STRING } from '@shared/constants'
 
 const application = remote.getGlobal('application')
 
@@ -53,7 +55,9 @@ export default class Api {
       rpcListenPort: port,
       rpcSecret: secret
     } = this.config
+    const host = '127.0.0.1'
     this.client = new Aria2({
+      host,
       port,
       secret
     })
@@ -80,9 +84,9 @@ export default class Api {
   savePreference (params = {}) {
     const kebabParams = changeKeysToKebabCase(params)
     if (is.renderer()) {
-      this.savePreferenceToNativeStore(kebabParams)
+      return this.savePreferenceToNativeStore(kebabParams)
     } else {
-      this.savePreferenceToLocalStorage(kebabParams)
+      return this.savePreferenceToLocalStorage(kebabParams)
     }
   }
 
@@ -95,6 +99,7 @@ export default class Api {
     if (!isEmpty(system)) {
       console.info('[Motrix] save system config: ', system)
       application.configManager.setSystemConfig(system)
+      this.changeGlobalOption(system)
     }
 
     if (!isEmpty(user)) {
@@ -111,6 +116,12 @@ export default class Api {
     return this.client.call('getVersion')
   }
 
+  changeGlobalOption (options) {
+    const args = formatOptionsForEngine(options)
+
+    return this.client.call('changeGlobalOption', args)
+  }
+
   getGlobalOption () {
     return new Promise((resolve) => {
       this.client.call('getGlobalOption')
@@ -120,6 +131,28 @@ export default class Api {
     })
   }
 
+  getOption (params = {}) {
+    const { gid } = params
+    const args = compactUndefined([gid])
+
+    return new Promise((resolve) => {
+      this.client.call('getOption', ...args)
+        .then((data) => {
+          resolve(changeKeysToCamelCase(data))
+        })
+    })
+  }
+
+  changeOption (params = {}) {
+    let { gid, options = {} } = params
+    options = formatOptionsForEngine(options)
+
+    const kebabOptions = changeKeysToKebabCase(options)
+    const args = compactUndefined([gid, kebabOptions])
+
+    return this.client.call('changeOption', ...args)
+  }
+
   getGlobalStat () {
     return this.client.call('getGlobalStat')
   }
@@ -127,10 +160,15 @@ export default class Api {
   addUri (params) {
     const {
       uris,
+      outs,
       options
     } = params
-    const tasks = uris.map((uri) => {
-      const args = compactUndefined([[uri], options])
+    const tasks = uris.map((uri, index) => {
+      const kebabOptions = changeKeysToKebabCase(options)
+      if (outs && outs[index]) {
+        kebabOptions['out'] = outs[index]
+      }
+      const args = compactUndefined([[uri], kebabOptions])
       return [ 'aria2.addUri', ...args ]
     })
     return this.client.multicall(tasks)
@@ -141,7 +179,8 @@ export default class Api {
       torrent,
       options
     } = params
-    const args = compactUndefined([torrent, [], options])
+    const kebabOptions = changeKeysToKebabCase(options)
+    const args = compactUndefined([torrent, [], kebabOptions])
     return this.client.call('addTorrent', ...args)
   }
 
@@ -150,12 +189,13 @@ export default class Api {
       metalink,
       options
     } = params
-    const args = compactUndefined([metalink, options])
+    const kebabOptions = changeKeysToKebabCase(options)
+    const args = compactUndefined([metalink, kebabOptions])
     return this.client.call('addMetalink', ...args)
   }
 
   fetchDownloadingTaskList (params = {}) {
-    const { offset = 0, num = 200, keys } = params
+    const { offset = 0, num = 20, keys } = params
     const activeArgs = compactUndefined([keys])
     const waitingArgs = compactUndefined([offset, num, keys])
     return new Promise((resolve, reject) => {
@@ -174,13 +214,13 @@ export default class Api {
   }
 
   fetchWaitingTaskList (params = {}) {
-    const { offset = 0, num = 200, keys } = params
+    const { offset = 0, num = 20, keys } = params
     const args = compactUndefined([offset, num, keys])
     return this.client.call('tellWaiting', ...args)
   }
 
   fetchStoppedTaskList (params = {}) {
-    const { offset = 0, num = 200, keys } = params
+    const { offset = 0, num = 20, keys } = params
     const args = compactUndefined([offset, num, keys])
     return this.client.call('tellStopped', ...args)
   }
@@ -267,5 +307,20 @@ export default class Api {
 
   stopPowerSaveBlocker () {
     application.energyManager.stopPowerSaveBlocker()
+  }
+
+  async fetchBtTrackerFromGitHub (source) {
+    if (isEmpty(source)) {
+      return EMPTY_STRING
+    }
+
+    const now = Date.now()
+    const promises = source.map((url) => {
+      return fetch(`${url}?t=${now}`).then((res) => res.text())
+    })
+
+    const values = await Promise.all(promises)
+    let result = values.join('\r\n').replace(/^\s*[\r\n]/gm, '')
+    return result
   }
 }

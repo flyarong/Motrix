@@ -1,15 +1,18 @@
 import {
-  isEmpty,
-  isNaN,
+  camelCase,
   compact,
   difference,
-  parseInt,
+  isArray,
+  isEmpty,
   isFunction,
-  camelCase,
-  kebabCase
+  isNaN,
+  kebabCase,
+  omitBy,
+  parseInt,
+  pick
 } from 'lodash'
 import { resolve } from 'path'
-import { userKeys, systemKeys } from './configKeys'
+import { userKeys, systemKeys, needRestartKeys } from './configKeys'
 
 export function bytesToSize (bytes) {
   const b = parseInt(bytes, 10)
@@ -154,7 +157,7 @@ export function getTaskFullPath (task) {
   }
 
   const [file] = files
-  const path = resolve(file.path)
+  const path = file.path ? resolve(file.path) : ''
   let fileName = ''
 
   if (path) {
@@ -174,6 +177,11 @@ export function getTaskFullPath (task) {
 export function isMagnetTask (task) {
   const { bittorrent } = task
   return bittorrent && !bittorrent.info
+}
+
+export function checkTaskIsSeeder (task) {
+  const { bittorrent, seeder } = task
+  return !!bittorrent && seeder === 'true'
 }
 
 export function getTaskUri (task, btTracker = []) {
@@ -301,6 +309,7 @@ export function separateConfig (options) {
   const system = {}
   // others
   const others = {}
+
   for (const [k, v] of Object.entries(options)) {
     if (userKeys.indexOf(k) !== -1) {
       user[k] = v
@@ -322,11 +331,82 @@ export function compactUndefined (arr = []) {
 }
 
 export function splitTextRows (text = '') {
-  return text.replace(/\r\n/g, '\n').split('\n') || []
+  let result = text.replace(/(?:\r\n|\r|\n)/g, '\n').split('\n') || []
+  result = result.map((row) => row.trim())
+  return result
 }
 
-const audioSuffix = ['.aac', '.mp3', '.ogg', '.ape', '.flac', '.m4a', '.wav', '.wma', '.flav']
-const videoSuffix = ['.avi', '.mkv', '.rmvb', '.wmv', '.mp4', '.m4a', '.vob', '.mov', '.mpg']
+export function convertCommaToLine (text = '') {
+  let arr = text.split(',')
+  arr = arr.map((row) => row.trim())
+  const result = arr.join('\n')
+  return result
+}
+
+export function convertLineToComma (text = '') {
+  const result = text.trim().replace(/(?:\r\n|\r|\n)/g, ',')
+  return result
+}
+
+export const imageSuffix = [
+  '.ai',
+  '.bmp',
+  '.eps',
+  '.gif',
+  '.icn',
+  '.ico',
+  '.jpeg',
+  '.jpg',
+  '.png',
+  '.psd',
+  '.raw',
+  '.sketch',
+  '.svg',
+  '.tif',
+  '.webp',
+  '.xd'
+]
+export const audioSuffix = [
+  '.aac',
+  '.ape',
+  '.flac',
+  '.flav',
+  '.m4a',
+  '.mp3',
+  '.ogg',
+  '.wav',
+  '.wma'
+]
+export const videoSuffix = [
+  '.avi',
+  '.m4a',
+  '.mkv',
+  '.mov',
+  '.mp4',
+  '.mpg',
+  '.rmvb',
+  '.vob',
+  '.wmv'
+]
+
+export function filterVideoFiles (files = []) {
+  return files.filter((item) => {
+    return videoSuffix.includes(item.extension)
+  })
+}
+
+export function filterAudioFiles (files = []) {
+  return files.filter((item) => {
+    return audioSuffix.includes(item.extension)
+  })
+}
+
+export function filterImageFiles (files = []) {
+  return files.filter((item) => {
+    return imageSuffix.includes(item.extension)
+  })
+}
+
 export function isAudioOrVideo (uri = '') {
   const suffixs = [...audioSuffix, ...videoSuffix]
   const result = suffixs.some((suffix) => {
@@ -350,9 +430,10 @@ export function decodeThunderLink (url = '') {
     return url
   }
 
-  let result = url.split('thunder://')[1]
+  let result = url.trim()
+  result = result.split('thunder://')[1]
   result = Buffer.from(result, 'base64').toString('utf8')
-  result = result.substring(0, result.length - 2)
+  result = result.substring(2, result.length - 2)
   return result
 }
 
@@ -369,4 +450,142 @@ export function detectResource (content) {
   return resourceTag.some((type) => {
     return content.includes(type)
   })
+}
+
+export function buildFileList (rawFile) {
+  rawFile.uid = Date.now()
+  let file = {
+    status: 'ready',
+    name: rawFile.name,
+    size: rawFile.size,
+    percentage: 0,
+    uid: rawFile.uid,
+    raw: rawFile
+  }
+  const fileList = [file]
+  return fileList
+}
+
+const supportRtlLocales = [
+  /* 'العربية', Arabic */
+  'ar',
+  /* 'فارسی', Persian */
+  'fa',
+  /* 'עברית', Hebrew */
+  'he',
+  /* 'Kurdî / كوردی', Kurdish */
+  'ku',
+  /* 'پنجابی', Western Punjabi */
+  'pa',
+  /* 'پښتو', Pashto, */
+  'ps',
+  /* 'سنڌي', Sindhi */
+  'sd',
+  /* 'اردو', Urdu */
+  'ur',
+  /* 'ייִדיש', Yiddish */
+  'yi'
+]
+export function isRTL (locale = 'en-US') {
+  return supportRtlLocales.includes(locale)
+}
+
+export function getLangDirection (locale = 'en-US') {
+  return isRTL(locale) ? 'rtl' : 'ltr'
+}
+
+export function listTorrentFiles (files) {
+  const result = files.map((file, index) => {
+    const extension = getFileExtension(file.path)
+    const item = {
+      // aria2 select-file start index at 1
+      // possible Values: 1-1048576
+      idx: index + 1,
+      extension: `.${extension}`,
+      ...file
+    }
+    return item
+  })
+  return result
+}
+
+export function getFileExtension (filename) {
+  return filename.slice((filename.lastIndexOf('.') - 1 >>> 0) + 2)
+}
+
+export function removeExtensionDot (extension = '') {
+  return extension.replace('.', '')
+}
+
+export function diffConfig (current = {}, next = {}) {
+  const curr = pick(current, Object.keys(next))
+  const result = omitBy(next, (val, key) => {
+    if (isArray(val)) {
+      return false
+    }
+    return curr[key] === val
+  })
+  return result
+}
+
+export function calcFormLabelWidth (locale) {
+  return locale.startsWith('de') ? '28%' : '23%'
+}
+
+export function parseHeader (header = '') {
+  header = header.trim()
+  let result = {}
+  if (!header) {
+    return result
+  }
+
+  const headers = splitTextRows(header)
+  headers.forEach((line) => {
+    const index = line.indexOf(':')
+    const name = line.substr(0, index)
+    const value = line.substr(index + 1).trim()
+    result[name] = value
+  })
+  result = changeKeysToCamelCase(result)
+
+  return result
+}
+
+export function formatOptionsForEngine (options) {
+  const result = {}
+
+  Object.keys(options).forEach((key) => {
+    result[key] = `${options[key]}`
+  })
+
+  return result
+}
+
+export function buildRpcUrl (options) {
+  const { port, secret } = options
+  let result = `127.0.0.1:${port}/jsonrpc`
+  if (secret) {
+    result = `token:${secret}@${result}`
+  }
+  result = `http://${result}`
+
+  return result
+}
+
+export function checkIsNeedRestart (changed = {}) {
+  let result = false
+
+  if (isEmpty(changed)) {
+    return result
+  }
+
+  const kebabCaseChanged = changeKeysToKebabCase(changed)
+  needRestartKeys.some((key) => {
+    if (kebabCaseChanged.hasOwnProperty(key)) {
+      result = true
+      return true
+    }
+  })
+
+  return result
 }

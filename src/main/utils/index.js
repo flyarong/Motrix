@@ -1,11 +1,17 @@
 import { app } from 'electron'
 import is from 'electron-is'
 import { resolve } from 'path'
+import { existsSync, lstatSync } from 'fs'
 import logger from '../core/Logger'
 import engineBinMap from '../configs/engine'
 
 export function getLogPath () {
   return logger.transports.file.file
+}
+
+export function getDhtPath (protocol) {
+  const name = protocol === 6 ? 'dht6.dat' : 'dht.dat'
+  return resolve(app.getPath('userData'), `./${name}`)
 }
 
 export function getSessionPath () {
@@ -44,17 +50,77 @@ export function isRunningInDmg () {
   return result
 }
 
-export function moveAppToApplicationsFolder () {
+export function moveAppToApplicationsFolder (errorMsg = '') {
   return new Promise((resolve, reject) => {
     try {
       const result = app.moveToApplicationsFolder()
       if (result) {
         resolve(result)
       } else {
-        reject(new Error('应用程序移动失败'))
+        reject(new Error(errorMsg))
       }
     } catch (err) {
       reject(err)
     }
   })
+}
+
+export function splitArgv (argv) {
+  const args = []
+  const extra = {}
+  for (const arg of argv) {
+    if (arg.startsWith('--')) {
+      const kv = arg.split('=')
+      const key = kv[0]
+      const value = kv[1] || '1'
+      extra[key] = value
+      continue
+    }
+    args.push(arg)
+  }
+  return { args, extra }
+}
+
+export function parseArgvAsUrl (argv) {
+  let arg = argv[1]
+  if (!arg) {
+    return
+  }
+
+  if (checkIsSupportedSchema(arg)) {
+    return arg
+  }
+}
+
+export function checkIsSupportedSchema (url = '') {
+  const str = url.toLowerCase()
+  if (
+    str.startsWith('mo:') ||
+    str.startsWith('motrix:') ||
+    str.startsWith('http:') ||
+    str.startsWith('https:') ||
+    str.startsWith('ftp:') ||
+    str.startsWith('magnet:') ||
+    str.startsWith('thunder:')
+  ) {
+    return true
+  } else {
+    return false
+  }
+}
+
+export function isDirectory (path) {
+  return existsSync(path) && lstatSync(path).isDirectory()
+}
+
+export function parseArgvAsFile (argv) {
+  let arg = argv[1]
+  if (!arg || isDirectory(arg)) {
+    return
+  }
+
+  if (is.linux()) {
+    arg = arg.replace('file://', '')
+  }
+  return arg
 }

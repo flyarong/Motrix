@@ -5,6 +5,7 @@
     :visible.sync="visible"
     :before-close="handleClose"
     @open="handleOpen"
+    @opened="handleOpened"
     @closed="handleClosed">
     <el-form
       ref="taskForm"
@@ -19,8 +20,9 @@
               type="textarea"
               :autosize="{ minRows: 3, maxRows: 5 }"
               auto-complete="off"
-              :placeholder="$t('task.uri-task-tip')"
+              :placeholder="$t('task.uri-task-tips')"
               @change="handleUriChange"
+              @paste.native="handleUriPaste"
               v-model="form.uris">
             </el-input>
           </el-form-item>
@@ -28,7 +30,6 @@
         <el-tab-pane
           :label="$t('task.torrent-task')"
           name="torrent"
-          v-if="iLoveEggFeatures"
           >
           <el-form-item>
             <mo-select-torrent
@@ -40,7 +41,7 @@
       <el-row :gutter="12">
         <el-col :span="15">
           <el-form-item :label="`${$t('task.task-out')}: `" :label-width="formLabelWidth">
-            <el-input :placeholder="$t('task.task-out-tip')" v-model="form.out">
+            <el-input :placeholder="$t('task.task-out-tips')" v-model="form.out">
             </el-input>
           </el-form-item>
         </el-col>
@@ -115,25 +116,32 @@
   import SelectDirectory from '@/components/Native/SelectDirectory'
   import SelectTorrent from '@/components/Task/SelectTorrent'
   import { prettifyDir } from '@/components/Native/utils'
-  import '@/components/Icons/inbox'
+  import {
+    NONE_SELECTED_FILES,
+    SELECTED_ALL_FILES
+  } from '@shared/constants'
+  import { buildOuts } from '@shared/rename'
   import {
     detectResource,
-    splitTaskLinks,
-    needCheckCopyright
+    splitTaskLinks
   } from '@shared/utils'
+  import '@/components/Icons/inbox'
 
   const initialForm = (state) => {
+    const { addTaskUrl, addTaskOptions } = state.app
     const { dir, split, newTaskShowDownloading } = state.preference.config
     const result = {
-      uris: '',
+      uris: addTaskUrl,
       torrent: '',
+      selectFile: NONE_SELECTED_FILES,
       out: '',
       userAgent: '',
       referer: '',
       cookie: '',
       dir,
       split,
-      newTaskShowDownloading
+      newTaskShowDownloading,
+      ...addTaskOptions
     }
     return result
   }
@@ -158,7 +166,6 @@
       return {
         formLabelWidth: '100px',
         showAdvanced: false,
-        torrentName: '',
         form: {},
         rules: {}
       }
@@ -175,10 +182,7 @@
       }),
       ...mapState('preference', {
         config: state => state.config
-      }),
-      iLoveEggFeatures: function () {
-        return !this.isMas() || (this.isMas() && this.config.enableEggFeatures)
-      }
+      })
     },
     watch: {
       taskType: function (current, previous) {
@@ -211,10 +215,16 @@
         if (!hasResource) {
           return
         }
-        this.form.uris = content
+        if (isEmpty(this.form.uris)) {
+          this.form.uris = content
+        }
+      },
+      handleOpened () {
+        this.detectThunderResource(this.form.uris)
       },
       handleClose (done) {
         this.$store.dispatch('app/hideAddTaskDialog')
+        this.$store.dispatch('app/updateAddTaskOptions', {})
       },
       handleClosed () {
         this.reset()
@@ -222,22 +232,27 @@
       handleTabClick (tab, event) {
         this.$store.dispatch('app/changeAddTaskType', tab.name)
       },
-      handleUriChange () {
-        // el-input does not support @paste event ?
-        // https://github.com/ElemeFE/element/blob/master/packages/input/src/input.vue
-        const { uris } = this.form
+      handleUriPaste () {
+        setImmediate(() => {
+          const uris = this.$refs.uri.value
+          this.detectThunderResource(uris)
+        })
+      },
+      detectThunderResource (uris = '') {
         if (uris.includes('thunder://')) {
           this.$msg({
             type: 'warning',
-            message: this.$t('task.thunder-link-tip'),
+            message: this.$t('task.thunder-link-tips'),
             duration: 6000
           })
         }
       },
-      handleTorrentChange (torrent, file, fileList) {
-        // TODO 种子选择部分文件下载
-        // console.log('handleTorrentChange===>', torrent, file, fileList)
+      handleUriChange () {
+        console.log('handleUriChange===>', this.form.uris)
+      },
+      handleTorrentChange (torrent, selectedFileIndex) {
         this.form.torrent = torrent
+        this.form.selectFile = selectedFileIndex
       },
       handleSplitChange (value) {
         console.log('handleSplitChange===>', value)
@@ -246,6 +261,7 @@
         this.form.dir = dir
       },
       reset () {
+        this.showAdvanced = false
         this.form = initialForm(this.$store.state)
       },
       handleCancel (formName) {
@@ -268,9 +284,12 @@
         }
         return result
       },
-      buildOption (form) {
+      buildOption (type, form) {
         const {
-          dir, out, split
+          dir,
+          out,
+          selectFile,
+          split
         } = form
         const result = {}
 
@@ -280,6 +299,15 @@
 
         if (!isEmpty(out)) {
           result.out = out
+        }
+
+        if (type === 'torrent') {
+          if (
+            selectFile !== SELECTED_ALL_FILES &&
+            selectFile !== NONE_SELECTED_FILES
+          ) {
+            result.selectFile = selectFile
+          }
         }
 
         if (split > 0) {
@@ -293,23 +321,31 @@
         return result
       },
       buildUriPayload (form) {
-        let { uris } = form
+        let { uris, out } = form
+        if (isEmpty(uris)) {
+          throw new Error(this.$t('task.new-task-uris-required'))
+        }
         uris = splitTaskLinks(uris)
-        const options = this.buildOption(form)
+        const outs = buildOuts(uris, out)
+
+        const options = this.buildOption('uri', form)
         const result = {
           uris,
+          outs,
           options
         }
         return result
       },
       buildTorrentPayload (form) {
         const { torrent } = form
-        const options = this.buildOption(form)
+        if (isEmpty(torrent)) {
+          throw new Error(this.$t('task.new-task-torrent-required'))
+        }
+        const options = this.buildOption('torrent', form)
         const result = {
           torrent,
           options
         }
-        console.log('buildTorrentPayload===>', result)
         return result
       },
       addTask (type, form) {
@@ -332,58 +368,24 @@
           console.error('addTask fail', form)
         }
       },
-      checkCopyright (type, form) {
-        const { uris } = form
-
-        return new Promise((resolve, reject) => {
-          if (type !== 'uri') {
-            resolve()
-          }
-
-          if (!needCheckCopyright(uris)) {
-            resolve()
-            return
-          }
-
-          if (this.iLoveEggFeatures) {
-            resolve()
-            return
-          }
-
-          this.$electron.remote.dialog.showMessageBox({
-            type: 'warning',
-            title: this.$t('task.copyright-warning'),
-            message: this.$t('task.copyright-warning-message'),
-            buttons: [this.$t('task.copyright-yes'), this.$t('task.copyright-no')],
-            cancelId: 1
-          }, (buttonIndex, checkboxChecked) => {
-            if (buttonIndex === 0) {
-              resolve()
-            } else {
-              reject(new Error(this.$t('task.copyright-error-message')))
-            }
-          })
-        })
-      },
       submitForm (formName) {
         this.$refs[formName].validate((valid) => {
           if (!valid) {
             return false
           }
 
-          this.checkCopyright(this.type, this.form)
-            .then(() => {
-              this.addTask(this.type, this.form)
-              this.$store.dispatch('app/hideAddTaskDialog')
-              if (this.form.newTaskShowDownloading) {
-                this.$router.push({
-                  path: '/task/active'
-                })
-              }
-            })
-            .catch((err) => {
-              this.$msg.error(err.message)
-            })
+          try {
+            this.addTask(this.type, this.form)
+
+            this.$store.dispatch('app/hideAddTaskDialog')
+            if (this.form.newTaskShowDownloading) {
+              this.$router.push({
+                path: '/task/active'
+              })
+            }
+          } catch (err) {
+            this.$msg.error(err.message)
+          }
         })
       }
     }
@@ -391,14 +393,17 @@
 </script>
 
 <style lang="scss">
-  .add-task-dialog {
+  .el-dialog.add-task-dialog {
     max-width: 632px;
+    .el-tabs__header {
+      user-select: none;
+    }
     .el-input-number.el-input-number--mini {
       width: 100%;
     }
     .el-dialog__footer {
       padding-top: 20px;
-      background: #f5f5f5;
+      background-color: $--add-task-dialog-footer-background;
       border-radius: 0 0 5px 5px;
     }
     .dialog-footer {

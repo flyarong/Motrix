@@ -11,10 +11,54 @@
         size="mini"
         :model="form"
         :rules="rules">
+        <el-form-item :label="`${$t('preferences.appearance')}: `" :label-width="formLabelWidth">
+          <el-col class="form-item-sub" :span="24">
+            <mo-theme-switcher
+              v-model="form.theme"
+              @change="handleThemeChange"
+            />
+          </el-col>
+          <el-col v-if="showHideAppMenuOption" class="form-item-sub" :span="16">
+            <el-checkbox v-model="form.hideAppMenu">
+              {{ $t('preferences.hide-app-menu') }}
+            </el-checkbox>
+          </el-col>
+        </el-form-item>
+        <el-form-item :label="`${$t('preferences.language')}: `" :label-width="formLabelWidth">
+          <el-col class="form-item-sub" :span="16">
+            <el-select
+              v-model="form.locale"
+              @change="handleLocaleChange"
+              :placeholder="$t('preferences.change-language')">
+              <el-option
+                v-for="item in locales"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value">
+              </el-option>
+            </el-select>
+          </el-col>
+        </el-form-item>
         <el-form-item :label="`${$t('preferences.startup')}: `" :label-width="formLabelWidth">
-          <el-checkbox v-model="form.resumeAllWhenAppLaunched">
-            {{ $t('preferences.auto-resume-all') }}
-          </el-checkbox>
+          <el-col
+            class="form-item-sub"
+            :span="24"
+            v-if="!isLinux()"
+          >
+            <el-checkbox v-model="form.openAtLogin">
+              {{ $t('preferences.open-at-login') }}
+            </el-checkbox>
+          </el-col>
+          <el-col class="form-item-sub" :span="24">
+            <el-checkbox v-model="form.keepWindowState">
+              {{ $t('preferences.keep-window-state') }}
+            </el-checkbox>
+          </el-col>
+          <el-col class="form-item-sub" :span="24">
+            <el-checkbox v-model="form.resumeAllWhenAppLaunched">
+              {{ $t('preferences.auto-resume-all') }}
+            </el-checkbox>
+          </el-col>
         </el-form-item>
         <el-form-item :label="`${$t('preferences.default-dir')}: `" :label-width="formLabelWidth">
           <el-input placeholder="" v-model="downloadDir" :readonly="isMas()">
@@ -25,8 +69,32 @@
             />
           </el-input>
           <div class="el-form-item__info" v-if="isMas()" style="margin-top: 8px;">
-            {{ $t('preferences.mas-default-dir-tip') }}
+            {{ $t('preferences.mas-default-dir-tips') }}
           </div>
+        </el-form-item>
+        <el-form-item :label="`${$t('preferences.transfer-settings')}: `" :label-width="formLabelWidth">
+          <el-col class="form-item-sub" :span="24">
+            {{ $t('preferences.transfer-speed-upload') }}
+            <el-select v-model="form.maxOverallUploadLimit">
+              <el-option
+                v-for="item in speedOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value">
+              </el-option>
+            </el-select>
+          </el-col>
+          <el-col class="form-item-sub" :span="24">
+            {{ $t('preferences.transfer-speed-download') }}
+            <el-select v-model="form.maxOverallDownloadLimit">
+              <el-option
+                v-for="item in speedOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value">
+              </el-option>
+            </el-select>
+          </el-col>
         </el-form-item>
         <el-form-item :label="`${$t('preferences.task-manage')}: `" :label-width="formLabelWidth">
           <el-col class="form-item-sub" :span="24">
@@ -77,28 +145,51 @@
 <script>
   import is from 'electron-is'
   import { mapState } from 'vuex'
+  import { cloneDeep } from 'lodash'
   import SelectDirectory from '@/components/Native/SelectDirectory'
+  import ThemeSwitcher from '@/components/Preference/ThemeSwitcher'
+  import { availableLanguages, getLanguage } from '@shared/locales'
+  import { getLocaleManager } from '@/components/Locale'
   import { prettifyDir } from '@/components/Native/utils'
+  import {
+    calcFormLabelWidth,
+    checkIsNeedRestart,
+    diffConfig
+  } from '@shared/utils'
 
   const initialForm = (config) => {
     const {
       dir,
-      split,
-      resumeAllWhenAppLaunched,
+      hideAppMenu,
+      keepWindowState,
+      locale,
       maxConcurrentDownloads,
       maxConnectionPerServer,
+      maxOverallUploadLimit,
+      maxOverallDownloadLimit,
+      newTaskShowDownloading,
+      openAtLogin,
+      resumeAllWhenAppLaunched,
+      split,
       taskNotification,
-      newTaskShowDownloading
+      theme
     } = config
     const result = {
-      dir,
-      split,
       continue: config.continue,
-      resumeAllWhenAppLaunched,
+      dir,
+      hideAppMenu,
+      keepWindowState,
+      locale,
       maxConcurrentDownloads,
       maxConnectionPerServer,
+      maxOverallUploadLimit,
+      maxOverallDownloadLimit,
+      newTaskShowDownloading,
+      openAtLogin,
+      resumeAllWhenAppLaunched,
+      split,
       taskNotification,
-      newTaskShowDownloading
+      theme
     }
     return result
   }
@@ -106,20 +197,31 @@
   export default {
     name: 'mo-preference-basic',
     components: {
-      [SelectDirectory.name]: SelectDirectory
+      [SelectDirectory.name]: SelectDirectory,
+      [ThemeSwitcher.name]: ThemeSwitcher
     },
-    data: function () {
+    data () {
+      const { locale } = this.$store.state.preference.config
+      const form = initialForm(this.$store.state.preference.config)
+      const formOriginal = cloneDeep(form)
+
       return {
-        formLabelWidth: '23%',
-        form: initialForm(this.$store.state.preference.config),
-        rules: {}
+        form,
+        formLabelWidth: calcFormLabelWidth(locale),
+        formOriginal,
+        locales: availableLanguages,
+        rules: {},
+        speedOptions: this.buildSpeedOptions()
       }
     },
     computed: {
-      title: function () {
+      title () {
         return this.$t('preferences.basic')
       },
-      downloadDir: function () {
+      showHideAppMenuOption () {
+        return is.windows() || is.linux()
+      },
+      downloadDir () {
         return prettifyDir(this.form.dir)
       },
       ...mapState('preference', {
@@ -129,8 +231,54 @@
     methods: {
       isRenderer: is.renderer,
       isMas: is.mas,
+      isLinux: is.linux,
+      handleLocaleChange (locale) {
+        const lng = getLanguage(locale)
+        getLocaleManager().changeLanguage(lng)
+        this.speedOptions = this.buildSpeedOptions()
+        this.$electron.ipcRenderer.send('command', 'application:change-locale', lng)
+      },
+      handleThemeChange (theme) {
+        this.form.theme = theme
+        this.$electron.ipcRenderer.send('command', 'application:change-theme', theme)
+      },
+      buildSpeedOptions () {
+        return [
+          {
+            label: this.$t('preferences.transfer-speed-unlimited'),
+            value: 0
+          },
+          {
+            label: '128 KB/s',
+            value: '128K'
+          },
+          {
+            label: '512 KB/s',
+            value: '512K'
+          },
+          {
+            label: '1 MB/s',
+            value: '1M'
+          },
+          {
+            label: '5 MB/s',
+            value: '5M'
+          },
+          {
+            label: '10 MB/s',
+            value: '10M'
+          }
+        ]
+      },
       onDirectorySelected (dir) {
         this.form.dir = dir
+      },
+      syncFormConfig () {
+        this.$store.dispatch('preference/fetchPreference')
+          .then((config) => {
+            this.form = initialForm(config)
+            this.formOriginal = cloneDeep(this.form)
+          })
       },
       submitForm (formName) {
         this.$refs[formName].validate((valid) => {
@@ -139,14 +287,34 @@
             return false
           }
 
-          this.$store.dispatch('preference/save', this.form)
+          const { openAtLogin } = this.form
+          const changed = diffConfig(this.formOriginal, this.form)
+          const data = {
+            ...changed
+          }
+          console.log('changed====》', data)
+
+          this.$store.dispatch('preference/save', data)
+            .then(() => {
+              this.$store.dispatch('app/fetchEngineOptions')
+              this.syncFormConfig()
+              this.$msg.success(this.$t('preferences.save-success-message'))
+            })
+            .catch(() => {
+              this.$msg.success(this.$t('preferences.save-fail-message'))
+            })
+
           if (this.isRenderer()) {
-            this.$electron.ipcRenderer.send('command', 'application:relaunch')
+            this.$electron.ipcRenderer.send('command', 'application:open-at-login', openAtLogin)
+
+            if (checkIsNeedRestart(changed)) {
+              this.$electron.ipcRenderer.send('command', 'application:relaunch')
+            }
           }
         })
       },
       resetForm (formName) {
-        this.form = initialForm(this.$store.state.preference.config)
+        this.syncFormConfig()
       }
     }
   }

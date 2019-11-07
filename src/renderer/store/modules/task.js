@@ -31,13 +31,13 @@ const actions = {
     dispatch('fetchList')
   },
   fetchList ({ state, commit }) {
-    api.fetchTaskList({ type: state.currentList })
+    return api.fetchTaskList({ type: state.currentList })
       .then((data) => {
         commit('UPDATE_TASK_LIST', data)
       })
   },
   fetchItem ({ dispatch }, gid) {
-    api.fetchTaskItem({ gid })
+    return api.fetchTaskItem({ gid })
       .then((data) => {
         dispatch('updateCurrentTaskItem', data)
       })
@@ -53,10 +53,11 @@ const actions = {
     commit('UPDATE_CURRENT_TASK_ITEM', task)
   },
   addUri ({ dispatch }, data) {
-    const { uris, options } = data
-    return api.addUri({ uris, options })
+    const { uris, outs, options } = data
+    return api.addUri({ uris, outs, options })
       .then(() => {
         dispatch('fetchList')
+        dispatch('app/updateAddTaskOptions', {}, { root: true })
       })
   },
   addTorrent ({ dispatch }, data) {
@@ -64,6 +65,7 @@ const actions = {
     return api.addTorrent({ torrent, options })
       .then(() => {
         dispatch('fetchList')
+        dispatch('app/updateAddTaskOptions', {}, { root: true })
       })
   },
   addMetalink ({ dispatch }, data) {
@@ -71,17 +73,33 @@ const actions = {
     return api.addMetalink({ metalink, options })
       .then(() => {
         dispatch('fetchList')
+        dispatch('app/updateAddTaskOptions', {}, { root: true })
       })
+  },
+  getTaskOption (_, gid) {
+    return new Promise((resolve) => {
+      api.getOption({ gid })
+        .then((data) => {
+          resolve(data)
+        })
+    })
+  },
+  changeTaskOption (_, payload) {
+    const { gid, options } = payload
+    return api.changeOption({ gid, options })
   },
   removeTask ({ dispatch }, task) {
     const { gid } = task
-    return api.removeTask({ gid })
-      .catch(() => {
-        return api.forceRemoveTask({ gid })
+    return api.forcePauseTask({ gid })
+      .catch((e) => {
+        console.log(`[Motrix] removeTask.forcePauseTask#[${gid}] fail`, e.message)
       })
       .finally(() => {
-        dispatch('fetchList')
-        dispatch('saveSession')
+        return api.removeTask({ gid })
+          .finally(() => {
+            dispatch('fetchList')
+            dispatch('saveSession')
+          })
       })
   },
   pauseTask ({ dispatch }, task) {
@@ -120,8 +138,18 @@ const actions = {
         dispatch('saveSession')
       })
   },
-  removeTaskRecord ({ dispatch }, task) {
+  stopSeeding ({ dispatch }, task) {
     const { gid } = task
+    const options = {
+      seedTime: 0
+    }
+    return dispatch('changeTaskOption', { gid, options })
+  },
+  removeTaskRecord ({ dispatch }, task) {
+    const { gid, status } = task
+    if (['error', 'complete', 'removed'].indexOf(status) === -1) {
+      return
+    }
     return api.removeTaskRecord({ gid })
       .finally(() => dispatch('fetchList'))
   },

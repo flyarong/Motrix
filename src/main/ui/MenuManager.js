@@ -6,29 +6,24 @@ import {
   updateStates
 } from '../utils/menu'
 import keymap from '@shared/keymap'
+import { getI18n } from '@/ui/Locale'
 
 export default class MenuManager extends EventEmitter {
   constructor (options) {
     super()
     this.options = options
+    this.i18n = getI18n()
 
     this.keymap = keymap
-    this.template = []
-
-    this.menu = null
     this.items = {}
+
+    this.load()
+
+    this.setup()
   }
 
-  load (locale = 'en-US') {
-    let template = null
-    try {
-      template = require(`../menus/${locale}/${process.platform}.json`)
-      if (!template) {
-        template = require(`../menus/en-US/${process.platform}.json`)
-      }
-    } catch (err) {
-      template = require(`../menus/en-US/${process.platform}.json`)
-    }
+  load () {
+    let template = require(`../menus/${process.platform}.json`)
     this.template = template['menu']
   }
 
@@ -38,18 +33,24 @@ export default class MenuManager extends EventEmitter {
       keystrokesByCommand[this.keymap[item]] = item
     }
 
-    const tpl = translateTemplate(this.template, keystrokesByCommand)
-    this.menu = Menu.buildFromTemplate(tpl)
+    // Deepclone the menu template to refresh menu
+    const template = JSON.parse(JSON.stringify(this.template))
+    const tpl = translateTemplate(template, keystrokesByCommand, this.i18n)
+    const menu = Menu.buildFromTemplate(tpl)
+    return menu
   }
 
-  setup (locale) {
-    this.load(locale)
-    this.build()
-    Menu.setApplicationMenu(this.menu)
-    this.items = flattenMenuItems(this.menu)
+  setup () {
+    const menu = this.build()
+    Menu.setApplicationMenu(menu)
+    this.items = flattenMenuItems(menu)
   }
 
-  updateStates (visibleStates, enabledStates, checkedStates) {
+  rebuild () {
+    this.setup()
+  }
+
+  updateMenuStates (visibleStates, enabledStates, checkedStates) {
     updateStates(this.items, visibleStates, enabledStates, checkedStates)
   }
 
@@ -57,13 +58,13 @@ export default class MenuManager extends EventEmitter {
     const visibleStates = {
       [id]: flag
     }
-    this.updateStates(visibleStates, null, null)
+    this.updateMenuStates(visibleStates, null, null)
   }
 
   updateMenuItemEnabledState (id, flag) {
     const enabledStates = {
       [id]: flag
     }
-    this.updateStates(null, enabledStates, null)
+    this.updateMenuStates(null, enabledStates, null)
   }
 }

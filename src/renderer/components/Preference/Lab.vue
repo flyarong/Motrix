@@ -16,23 +16,14 @@
             {{ $t('preferences.lab-warning') }}
           </div>
         </el-form-item>
-        <el-form-item :label="`${$t('preferences.download-protocol')}: `" :label-width="formLabelWidth">
-          <el-col class="form-item-sub" :span="24">
-            <el-switch
-              v-model="form.enableEggFeatures"
-              :active-text="$t('preferences.support-more-download-protocols')"
-              >
-            </el-switch>
-          </el-col>
-        </el-form-item>
         <el-form-item :label="`${$t('preferences.browser-extensions')}: `" :label-width="formLabelWidth">
           <el-col class="form-item-sub" :span="24">
             <a target="_blank" href="https://motrix.app/release/BaiduExporter.zip" rel="noopener noreferrer">
               {{ $t('preferences.baidu-exporter') }}
-              <mo-icon name="link" width="14" height="14" />
+              <mo-icon name="link" width="12" height="12" />
             </a>
             <div class="el-form-item__info" style="margin-top: 8px;">
-              {{ $t('preferences.browser-extensions-tip') }}
+              {{ $t('preferences.browser-extensions-tips') }}
               <a target="_blank" href="https://motrix.app/extensions/baidu" rel="noopener noreferrer">
                 {{ $t('preferences.baidu-exporter-help') }}
               </a>
@@ -51,42 +42,52 @@
 <script>
   import is from 'electron-is'
   import { mapState } from 'vuex'
+  import { cloneDeep } from 'lodash'
   import '@/components/Icons/info-square'
+  import {
+    calcFormLabelWidth,
+    diffConfig
+  } from '@shared/utils'
 
   const initialForm = (config) => {
-    const {
-      enableEggFeatures
-    } = config
+    // const {
+    // } = config
     const result = {
-      enableEggFeatures
     }
     return result
   }
 
   export default {
     name: 'mo-preference-lab',
-    components: {
-    },
-    data: function () {
+    data () {
+      const { locale } = this.$store.state.preference.config
+      const form = initialForm(this.$store.state.preference.config)
+      const formOriginal = cloneDeep(form)
+
       return {
-        formLabelWidth: '23%',
-        form: initialForm(this.$store.state.preference.config),
+        form,
+        formLabelWidth: calcFormLabelWidth(locale),
+        formOriginal,
         rules: {}
       }
     },
     computed: {
-      title: function () {
+      title () {
         return this.$t('preferences.lab')
       },
       ...mapState('preference', {
         config: state => state.config
       })
     },
-    watch: {
-
-    },
     methods: {
       isRenderer: is.renderer,
+      syncFormConfig () {
+        this.$store.dispatch('preference/fetchPreference')
+          .then((config) => {
+            this.form = initialForm(config)
+            this.formOriginal = cloneDeep(this.form)
+          })
+      },
       submitForm (formName) {
         this.$refs[formName].validate((valid) => {
           if (!valid) {
@@ -94,15 +95,28 @@
             return false
           }
 
-          console.log('this.form===>', this.form)
-          this.$store.dispatch('preference/save', this.form)
+          const changed = diffConfig(this.formOriginal, this.form)
+          const data = {
+            ...changed
+          }
+          console.log('changed====》', data)
+
+          this.$store.dispatch('preference/save', data)
+            .then(() => {
+              this.$store.dispatch('app/fetchEngineOptions')
+              this.syncFormConfig()
+              this.$msg.success(this.$t('preferences.save-success-message'))
+            })
+            .catch(() => {
+              this.$msg.success(this.$t('preferences.save-fail-message'))
+            })
+
           if (this.isRenderer()) {
-            this.$electron.ipcRenderer.send('command', 'application:relaunch')
           }
         })
       },
       resetForm (formName) {
-        this.form = initialForm(this.$store.state.preference.config)
+        this.syncFormConfig()
       }
     }
   }

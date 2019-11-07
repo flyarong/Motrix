@@ -1,15 +1,19 @@
 import { join } from 'path'
 import { EventEmitter } from 'events'
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, screen, BrowserWindow } from 'electron'
 import is from 'electron-is'
 import pageConfig from '../configs/page'
+import logger from '../core/Logger'
+import { debounce } from 'lodash'
 
 const defaultBrowserOptions = {
   titleBarStyle: 'hiddenInset',
-  useContentSize: true,
   show: false,
   width: 1024,
-  height: 768
+  height: 768,
+  webPreferences: {
+    nodeIntegration: true
+  }
 }
 
 export default class WindowManager extends EventEmitter {
@@ -21,9 +25,9 @@ export default class WindowManager extends EventEmitter {
 
     this.willQuit = false
 
-    app.on('before-quit', () => {
-      this.setWillQuit(true)
-    })
+    this.handleBeforeQuit()
+
+    this.handleAllWindowClosed()
   }
 
   setWillQuit (flag) {
@@ -37,6 +41,13 @@ export default class WindowManager extends EventEmitter {
       result.attrs.frame = false
     }
 
+    // Optimized for small screen users
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize
+    const widthScale = width >= 1280 ? 1 : 0.875
+    const heightScale = height >= 800 ? 1 : 0.875
+    result.attrs.width *= widthScale
+    result.attrs.height *= heightScale
+
     // fix AppImage Dock Icon Missing
     // https://github.com/AppImage/AppImageKit/wiki/Bundling-Electron-apps
     if (is.linux()) {
@@ -46,37 +57,57 @@ export default class WindowManager extends EventEmitter {
     return result
   }
 
-  openWindow (page) {
-    const options = this.getPageOptions(page)
+  getPageBounds (page) {
+    const enabled = this.userConfig['keep-window-state']
+    const windowStateMap = this.userConfig['window-state'] || {}
+    let result = null
+    if (enabled) {
+      result = windowStateMap[page]
+    }
+
+    return result
+  }
+
+  openWindow (page, options = {}) {
+    const pageOptions = this.getPageOptions(page)
+    const { hidden } = options
 
     let window = this.windows[page] || null
     if (window) {
-      window.restore()
+      window.show()
       window.focus()
       return window
     }
 
     window = new BrowserWindow({
       ...defaultBrowserOptions,
-      ...options.attrs
+      ...pageOptions.attrs
     })
+
+    const bounds = this.getPageBounds(page)
+    console.log('bounds ====>', bounds)
+    if (bounds) {
+      window.setBounds(bounds)
+    }
 
     window.webContents.on('new-window', (e, url) => {
       e.preventDefault()
       shell.openExternal(url)
     })
 
-    if (options.url) {
-      window.loadURL(options.url)
+    if (pageOptions.url) {
+      window.loadURL(pageOptions.url)
     }
 
     window.once('ready-to-show', () => {
-      window.show()
+      if (!hidden) {
+        window.show()
+      }
     })
 
-    if (options.bindCloseToHide && process.platform === 'darwin') {
-      this.bindCloseToHide(page, window)
-    }
+    this.handleWindowState(page, window)
+
+    this.handleWindowClose(pageOptions, page, window)
 
     this.bindAfterClosed(page, window)
 
@@ -103,6 +134,9 @@ export default class WindowManager extends EventEmitter {
   destroyWindow (page) {
     const win = this.getWindow(page)
     this.removeWindow(page)
+    win.removeListener('closed')
+    win.removeListener('move')
+    win.removeListener('resize')
     win.destroy()
   }
 
@@ -116,24 +150,84 @@ export default class WindowManager extends EventEmitter {
     })
   }
 
-  bindCloseToHide (page, window) {
+  handleWindowState (page, window) {
+    window.on('resize', debounce(() => {
+      const bounds = window.getBounds()
+      this.emit('window-resized', { page, bounds })
+    }, 500))
+
+    window.on('move', debounce(() => {
+      const bounds = window.getBounds()
+      this.emit('window-moved', { page, bounds })
+    }, 500))
+  }
+
+  handleWindowClose (pageOptions, page, window) {
     window.on('close', (event) => {
-      if (!this.willQuit) {
+      if (pageOptions.bindCloseToHide && !this.willQuit) {
         event.preventDefault()
         window.hide()
       }
+      const bounds = window.getBounds()
+      this.emit('window-closed', { page, bounds })
     })
+  }
+
+  showWindow (page) {
+    const window = this.getWindow(page)
+    if (!window) {
+      return
+    }
+    window.show()
+  }
+
+  hideWindow (page) {
+    const window = this.getWindow(page)
+    if (!window) {
+      return
+    }
+    window.hide()
+  }
+
+  hideAllWindow () {
+    this.getWindowList().forEach((window) => {
+      window.hide()
+    })
+  }
+
+  toggleWindow (page) {
+    const window = this.getWindow(page)
+    if (!window) {
+      return
+    }
+    if (window.isVisible()) {
+      window.hide()
+    } else {
+      window.show()
+    }
   }
 
   getFocusedWindow () {
     return BrowserWindow.getFocusedWindow()
   }
 
+  handleBeforeQuit () {
+    app.on('before-quit', () => {
+      this.setWillQuit(true)
+    })
+  }
+
+  handleAllWindowClosed () {
+    app.on('window-all-closed', (event) => {
+      event.preventDefault()
+    })
+  }
+
   sendCommandTo (window, command, ...args) {
     if (!window) {
       return
     }
-    console.log('sendCommandTo====>', window, command, ...args)
+    logger.info('[Motrix] sendCommandTo===>', command, ...args)
     window.webContents.send('command', command, ...args)
   }
 
