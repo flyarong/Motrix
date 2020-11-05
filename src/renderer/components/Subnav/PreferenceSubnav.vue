@@ -47,14 +47,16 @@
       }
     },
     computed: {
-      title: function () {
+      title () {
         return this.$t('subnav.preferences')
       }
     },
     methods: {
-      nav: function (category = 'basic') {
+      nav (category = 'basic') {
         this.$router.push({
           path: `/preference/${category}`
+        }).catch(err => {
+          console.log(err)
         })
       }
     }

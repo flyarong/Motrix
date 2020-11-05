@@ -1,33 +1,39 @@
 <template>
   <div id="app">
     <mo-title-bar
-      v-if="isRenderer()"
+      v-if="isRenderer"
       :showActions="showWindowActions"
     />
     <router-view />
     <mo-engine-client
       :secret="rpcSecret"
     />
-    <mo-ipc v-if="isRenderer()" />
+    <mo-ipc v-if="isRenderer" />
+    <mo-dynamic-tray v-if="enableTraySpeedometer" />
   </div>
 </template>
 
 <script>
   import is from 'electron-is'
-  import TitleBar from '@/components/Native/TitleBar'
-  import EngineClient from '@/components/Native/EngineClient'
-  import Ipc from '@/components/Native/Ipc'
   import { mapState } from 'vuex'
   import { getLangDirection } from '@shared/utils'
+  import { APP_THEME } from '@shared/constants'
+  import DynamicTray from '@/components/Native/DynamicTray'
+  import EngineClient from '@/components/Native/EngineClient'
+  import Ipc from '@/components/Native/Ipc'
+  import TitleBar from '@/components/Native/TitleBar'
 
   export default {
     name: 'Motrix',
     components: {
-      [TitleBar.name]: TitleBar,
+      [DynamicTray.name]: DynamicTray,
       [EngineClient.name]: EngineClient,
-      [Ipc.name]: Ipc
+      [Ipc.name]: Ipc,
+      [TitleBar.name]: TitleBar
     },
     computed: {
+      isMac: () => is.macOS(),
+      isRenderer: () => is.renderer(),
       ...mapState('app', {
         systemTheme: state => state.systemTheme
       }),
@@ -35,44 +41,48 @@
         showWindowActions: state => {
           return (is.windows() || is.linux()) && state.config.hideAppMenu
         },
+        traySpeedometer: state => state.config.traySpeedometer,
         rpcSecret: state => state.config.rpcSecret,
         theme: state => state.config.theme,
         locale: state => state.config.locale,
         dir: state => getLangDirection(state.config.locale)
       }),
-      themeClass: function () {
-        if (this.theme === 'auto') {
+      themeClass () {
+        if (this.theme === APP_THEME.AUTO) {
           return `theme-${this.systemTheme}`
         } else {
           return `theme-${this.theme}`
         }
       },
-      i18nClass: function () {
+      i18nClass () {
         return `i18n-${this.locale}`
       },
-      dirClass: function () {
+      dirClass () {
         return `dir-${this.dir}`
+      },
+      enableTraySpeedometer () {
+        const { traySpeedometer, isMac, isRenderer } = this
+        return traySpeedometer && isMac && isRenderer
       }
     },
     methods: {
-      isRenderer: is.renderer,
-      updateRootClassName: function () {
+      updateRootClassName () {
         const { themeClass = '', i18nClass = '', dirClass = '' } = this
         const className = `${themeClass} ${i18nClass} ${dirClass}`
         document.documentElement.className = className
       }
     },
-    beforeMount: function () {
+    beforeMount () {
       this.updateRootClassName()
     },
     watch: {
-      themeClass: function (val, oldVal) {
+      themeClass (val, oldVal) {
         this.updateRootClassName()
       },
-      i18nClass: function (val, oldVal) {
+      i18nClass (val, oldVal) {
         this.updateRootClassName()
       },
-      dirClass: function (val, oldVal) {
+      dirClass (val, oldVal) {
         this.updateRootClassName()
       }
     }

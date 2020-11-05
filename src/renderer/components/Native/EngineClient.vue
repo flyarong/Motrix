@@ -7,31 +7,26 @@
   import { mapState } from 'vuex'
   import api from '@/api'
   import {
-    showItemInFolder,
     addToRecentTask,
-    openDownloadDock,
-    showDownloadSpeedInDock
-  } from '@/components/Native/utils'
-  import {
-    getTaskName,
-    getTaskFullPath
-  } from '@shared/utils'
+    getTaskFullPath,
+    showItemInFolder
+  } from '@/utils/native'
+  import { getTaskName } from '@shared/utils'
 
   export default {
     name: 'mo-engine-client',
-    data: function () {
-      return {
-        downloading: false
-      }
-    },
     computed: {
       isRenderer: () => is.renderer(),
       ...mapState('app', {
+        uploadSpeed: state => state.stat.uploadSpeed,
         downloadSpeed: state => state.stat.downloadSpeed,
+        speed: state => state.stat.uploadSpeed + state.stat.downloadSpeed,
         interval: state => state.interval,
-        numActive: state => state.stat.numActive
+        downloading: state => state.stat.numActive > 0
       }),
       ...mapState('task', {
+        messages: state => state.messages,
+        seedingList: state => state.seedingList,
         taskItemInfoVisible: state => state.taskItemInfoVisible,
         currentTaskItem: state => state.currentTaskItem
       }),
@@ -40,15 +35,16 @@
       })
     },
     watch: {
-      downloadSpeed (val, oldVal) {
-        showDownloadSpeedInDock(val)
-      },
-      numActive (val, oldVal) {
-        this.downloading = val > 0
+      speed (val) {
+        const { uploadSpeed, downloadSpeed } = this
+        this.$electron.ipcRenderer.send('event', 'speed-change', {
+          uploadSpeed,
+          downloadSpeed
+        })
       },
       downloading (val, oldVal) {
         if (val !== oldVal && this.isRenderer) {
-          this.$electron.ipcRenderer.send('download-status-change', val)
+          this.$electron.ipcRenderer.send('event', 'download-status-change', val)
         }
       }
     },
@@ -62,8 +58,14 @@
       onDownloadStart (event) {
         this.$store.dispatch('task/fetchList')
         this.$store.dispatch('app/resetInterval')
+        this.$store.dispatch('task/saveSession')
         console.log('aria2 onDownloadStart', event)
         const [{ gid }] = event
+        const { seedingList } = this
+        if (seedingList.includes(gid)) {
+          return
+        }
+
         this.fetchTaskItem({ gid })
           .then((task) => {
             const taskName = getTaskName(task)
@@ -74,6 +76,11 @@
       onDownloadPause (event) {
         console.log('aria2 onDownloadPause')
         const [{ gid }] = event
+        const { seedingList } = this
+        if (seedingList.includes(gid)) {
+          return
+        }
+
         this.fetchTaskItem({ gid })
           .then((task) => {
             const taskName = getTaskName(task)
@@ -97,7 +104,7 @@
           .then((task) => {
             const taskName = getTaskName(task)
             const { errorCode, errorMessage } = task
-            console.error(`[Motrix] download error===> Gid: ${gid}, #${errorCode}, ${errorMessage}`)
+            console.error(`[Motrix] download error gid: ${gid}, #${errorCode}, ${errorMessage}`)
             const message = this.$t('task.download-error-message', { taskName })
             const link = `<a target="_blank" href="https://github.com/agalwood/Motrix/wiki/Error#${errorCode}" rel="noopener noreferrer">#${errorCode}</a>`
             this.$msg({
@@ -113,6 +120,8 @@
         console.log('aria2 onDownloadComplete')
         this.$store.dispatch('task/fetchList')
         const [{ gid }] = event
+        this.$store.dispatch('task/removeFromSeedingList', gid)
+
         this.fetchTaskItem({ gid })
           .then((task) => {
             this.handleDownloadComplete(task, false)
@@ -122,18 +131,26 @@
         console.log('aria2 onBtDownloadComplete')
         this.$store.dispatch('task/fetchList')
         const [{ gid }] = event
+        const { seedingList } = this
+        if (seedingList.includes(gid)) {
+          return
+        }
+
+        this.$store.dispatch('task/addToSeedingList', gid)
+
         this.fetchTaskItem({ gid })
           .then((task) => {
             this.handleDownloadComplete(task, true)
           })
       },
       handleDownloadComplete (task, isBT) {
-        const path = getTaskFullPath(task)
+        this.$store.dispatch('task/saveSession')
 
         addToRecentTask(task)
-        openDownloadDock(path)
 
+        const path = getTaskFullPath(task)
         this.showTaskCompleteNotify(task, isBT, path)
+        this.$electron.ipcRenderer.send('event', 'task-download-complete', task, path)
       },
       showTaskCompleteNotify (task, isBT, path) {
         const taskName = getTaskName(task)
@@ -150,11 +167,11 @@
           return
         }
 
-        /* eslint-disable no-new */
         const notifyMessage = isBT
           ? this.$t('task.bt-download-complete-notify')
           : this.$t('task.download-complete-notify')
 
+        /* eslint-disable no-new */
         const notify = new Notification(notifyMessage, {
           body: `${taskName}${tips}`
         })

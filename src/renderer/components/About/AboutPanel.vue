@@ -12,7 +12,6 @@
 </template>
 
 <script>
-  import is from 'electron-is'
   import { mapState } from 'vuex'
   import AppInfo from '@/components/About/AppInfo'
   import Copyright from '@/components/About/Copyright'
@@ -41,8 +40,6 @@
       })
     },
     methods: {
-      isRenderer: is.renderer,
-      isMas: is.mas,
       handleOpen () {
         this.$store.dispatch('app/fetchEngineInfo')
       },
@@ -58,6 +55,7 @@
 <style lang="scss">
   .app-about-dialog {
     max-width: 632px;
+    min-width: 380px;
     .el-dialog__header {
       padding-top: 0;
       padding-bottom: 0;

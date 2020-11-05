@@ -6,6 +6,9 @@
 
 <script>
   import '@/components/Icons/folder'
+  import {
+    showItemInFolder
+  } from '@/utils/native'
 
   export default {
     name: 'mo-show-in-folder',
@@ -17,11 +20,11 @@
     computed: {
     },
     methods: {
-      onFolderClick: function () {
+      onFolderClick () {
         if (!this.path) {
           return
         }
-        this.$electron.shell.showItemInFolder(this.path, {
+        showItemInFolder(this.path, {
           errorMsg: this.$t('task.file-not-exist')
         })
       }

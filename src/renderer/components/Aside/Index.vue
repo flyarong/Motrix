@@ -25,6 +25,7 @@
 <script>
   import is from 'electron-is'
   import { mapState } from 'vuex'
+  import { ADD_TASK_TYPE } from '@shared/constants'
   import LogoMini from '@/components/Logo/LogoMini'
   import '@/components/Icons/menu-task'
   import '@/components/Icons/menu-add'
@@ -40,24 +41,22 @@
       ...mapState('app', {
         currentPage: state => state.currentPage
       }),
-      asideDraggable: function () {
+      asideDraggable () {
         return is.macOS()
       }
     },
     methods: {
-      showAddTask (taskType = 'uri') {
+      showAddTask (taskType = ADD_TASK_TYPE.URI) {
         this.$store.dispatch('app/showAddTaskDialog', taskType)
       },
       showAboutPanel () {
-        // if (is.renderer()) {
-        //   this.$electron.ipcRenderer.send('command', 'application:about')
-        // } else {
         this.$store.dispatch('app/showAboutPanel')
-        // }
       },
       nav (page) {
         this.$router.push({
           path: page
+        }).catch(err => {
+          console.log(err)
         })
       }
     }

@@ -40,6 +40,10 @@ img {
   max-height: 100%;
 }
 
+iframe {
+  border: 0;
+}
+
 .clearfix {
   @include clearfix();
 }
@@ -113,6 +117,9 @@ img {
   line-height: 1;
   padding-top: 4px;
   color: $--color-info;
+  > a {
+    margin-right: 10px;
+  }
 }
 
 .el-input-number.el-input-number--mini {
@@ -234,7 +241,7 @@ img {
   }
   .panel-content {
     position: relative;
-    padding: 16px 36px 64px;
+    padding: 0 36px 0;
     height: 100%;
   }
 }
